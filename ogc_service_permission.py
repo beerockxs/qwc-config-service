@@ -106,6 +106,7 @@ class OGCServicePermission(PermissionQuery):
            self.project_settings_cache[ows_type][ows_name]["timestamp"] >= self.themesConfigMTime():
             document = self.project_settings_cache[ows_type][ows_name]["document"]
         else:
+			self.logger.info("using timeout %s for GetProjectSettings", timeoutSetting)
             # get GetProjectSettings
             response = requests.get(
                 urljoin(self.qgis_server_url, ows_name),
