@@ -98,7 +98,7 @@ class OGCServicePermission(PermissionQuery):
         permissions = {}
 
         cache = os.environ.get("__QWC_CONFIG_SERVICE_PROJECT_SETTINGS_CACHE", "0") == "1"
-		timeoutSetting = int(os.environ.get("QWC_CONFIG_SERVICE_GET_PROJECT_SETTINGS_TIMEOUT", 30))
+    	timeoutSetting = int(os.environ.get("QWC_CONFIG_SERVICE_GET_PROJECT_SETTINGS_TIMEOUT", 30))
         if cache and \
            ows_type in self.project_settings_cache and \
            ows_name in self.project_settings_cache[ows_type] and \
