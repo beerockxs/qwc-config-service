@@ -107,8 +107,9 @@ class OGCServicePermission(PermissionQuery):
             document = self.project_settings_cache[ows_type][ows_name]["document"]
         else:
             # get GetProjectSettings
+            ows_url = urljoin(self.qgis_server_url, ows_name)
             response = requests.get(
-                urljoin(self.qgis_server_url, ows_name),
+                ows_url,
                 params={
                     'SERVICE': ows_type,
                     'VERSION': '1.3.0',
@@ -119,7 +120,8 @@ class OGCServicePermission(PermissionQuery):
 
             if response.status_code != requests.codes.ok:
                 self.logger.warn(
-                    "Could not get GetProjectSettings: %s", response.content
+                    "Could not get GetProjectSettings from %s:\n%s",
+                    ows_url, response.content
                 )
                 return permissions
 
