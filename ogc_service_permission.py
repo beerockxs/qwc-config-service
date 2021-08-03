@@ -15,7 +15,7 @@ class OGCServicePermission(PermissionQuery):
     Query permissions for an OGC service.
     """
 
-    def __init__(self, default_allow, config_models, logger):
+    def __init__(self, default_allow, config_models, logger, project_settings_cache):
         """Constructor
 
         :param ConfigModels config_models: Helper for ORM models
@@ -30,7 +30,7 @@ class OGCServicePermission(PermissionQuery):
         self.qgis_server_url = os.environ.get('QGIS_SERVER_URL',
                                               'http://localhost:8001/ows/').rstrip('/') + '/'
 
-        self.project_settings_cache = {}
+        self.project_settings_cache = project_settings_cache
 
     def permissions(self, params, username, group, session):
         """Query permissions for OGC service.
@@ -97,17 +97,17 @@ class OGCServicePermission(PermissionQuery):
         """
         permissions = {}
 
+        ows_url = urljoin(self.qgis_server_url, ows_name)
         cache = os.environ.get("__QWC_CONFIG_SERVICE_PROJECT_SETTINGS_CACHE", "0") == "1"
         timeoutSetting = int(os.environ.get("QWC_CONFIG_SERVICE_GET_PROJECT_SETTINGS_TIMEOUT", 30))
         if cache and \
-           ows_type in self.project_settings_cache and \
-           ows_name in self.project_settings_cache[ows_type] and \
-           self.project_settings_cache[ows_type][ows_name]["timestamp"] != -1 and \
-           self.project_settings_cache[ows_type][ows_name]["timestamp"] >= self.themesConfigMTime():
-            document = self.project_settings_cache[ows_type][ows_name]["document"]
+           ows_url in self.project_settings_cache and \
+           self.project_settings_cache[ows_url]["timestamp"] != -1 and \
+           self.project_settings_cache[ows_url]["timestamp"] >= self.themesConfigMTime():
+            root = self.project_settings_cache[ows_url]["document"]
+            self.logger.info("Using cached project settings for %s" % ows_url)
         else:
             # get GetProjectSettings
-            ows_url = urljoin(self.qgis_server_url, ows_name)
             response = requests.get(
                 ows_url,
                 params={
@@ -127,25 +127,21 @@ class OGCServicePermission(PermissionQuery):
 
             document = response.content
 
+            # parse GetProjectSettings XML
+            ElementTree.register_namespace('', 'http://www.opengis.net/wms')
+            ElementTree.register_namespace('qgs', 'http://www.qgis.org/wms')
+            ElementTree.register_namespace('sld', 'http://www.opengis.net/sld')
+            ElementTree.register_namespace(
+                'xlink', 'http://www.w3.org/1999/xlink'
+            )
+            root = ElementTree.fromstring(document)
+
             if cache:
-                if not ows_type in self.project_settings_cache:
-                    self.project_settings_cache[ows_type] = {}
-                if not ows_name in self.project_settings_cache[ows_type]:
-                    self.project_settings_cache[ows_type][ows_name] = {}
-                self.project_settings_cache[ows_type][ows_name] = {
-                    "document": document,
+                self.project_settings_cache[ows_url] = {
+                    "document": root,
                     "timestamp": self.themesConfigMTime()
                 }
 
-
-        # parse GetProjectSettings XML
-        ElementTree.register_namespace('', 'http://www.opengis.net/wms')
-        ElementTree.register_namespace('qgs', 'http://www.qgis.org/wms')
-        ElementTree.register_namespace('sld', 'http://www.opengis.net/sld')
-        ElementTree.register_namespace(
-            'xlink', 'http://www.w3.org/1999/xlink'
-        )
-        root = ElementTree.fromstring(document)
 
         # use default namespace for XML search
         # namespace dict
@@ -444,3 +440,62 @@ class OGCServicePermission(PermissionQuery):
 
         # update restricted_group_layers
         permissions['restricted_group_layers'] = {}  # TODO
+
+    def collect_theme_urls(self, themes, theme_urls):
+        if "items" in themes:
+            for entry in themes["items"]:
+                theme_urls.add(entry["url"])
+        if "groups" in themes:
+            for theme_group in themes["groups"]:
+                self.collect_theme_urls(theme_group, theme_urls)
+
+    def cache_project_settings(self):
+        qwc2_path = os.environ.get('QWC2_PATH', 'qwc2/')
+        themes_config_path = os.environ.get(
+            'QWC2_THEMES_CONFIG', os.path.join(qwc2_path, 'themesConfig.json')
+        )
+        mtime = self.themesConfigMTime()
+
+        with open(themes_config_path) as fh:
+            data = json.load(fh)
+        # Collect themes
+        theme_urls = set()
+        themes = data["themes"] if "themes" in data else {}
+        self.collect_theme_urls(themes, theme_urls)
+
+        cached = []
+        for url in theme_urls:
+            if not url.startswith(self.qgis_server_url):
+                self.logger.warn("Not caching external WMS: %s" % url)
+                continue
+
+            ows_name = url[len(self.qgis_server_url):]
+            response = requests.get(
+                urljoin(self.qgis_server_url, ows_name),
+                params={
+                    'SERVICE': "WMS",
+                    'VERSION': '1.3.0',
+                    'REQUEST': 'GetProjectSettings'
+                },
+                timeout=30
+            )
+
+            if response.status_code == requests.codes.ok:
+                self.logger.info("Cached project settings for %s" % ows_name)
+                document = response.content
+
+                # parse GetProjectSettings XML
+                ElementTree.register_namespace('', 'http://www.opengis.net/wms')
+                ElementTree.register_namespace('qgs', 'http://www.qgis.org/wms')
+                ElementTree.register_namespace('sld', 'http://www.opengis.net/sld')
+                ElementTree.register_namespace(
+                    'xlink', 'http://www.w3.org/1999/xlink'
+                )
+                root = ElementTree.fromstring(document)
+
+                self.project_settings_cache[url] = {
+                    "document": root,
+                    "timestamp": mtime
+                }
+                cached.append(ows_name)
+        return {"cached_settings": cached}

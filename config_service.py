@@ -28,12 +28,14 @@ class ConfigService:
         data_permission_handler = DataServicePermission(
             self.db_engine, self.config_models, logger
         )
+        self.project_settings_cache = {}
         ogc_permission_handler = OGCServicePermission(
-            default_allow, self.config_models, logger
+            default_allow, self.config_models, logger, self.project_settings_cache
         )
         qwc_permission_handler = QWC2ViewerPermission(
             ogc_permission_handler, data_permission_handler,
-            default_allow, self.config_models, logger
+            default_allow, self.config_models, logger,
+            self.project_settings_cache
         )
         self.permission_handlers = {
             'data': data_permission_handler,
@@ -50,6 +52,9 @@ class ConfigService:
         self.themes_config_path = os.environ.get(
             'QWC2_THEMES_CONFIG', os.path.join(qwc2_path, 'themesConfig.json')
         )
+
+        if os.environ.get("__QWC_CONFIG_SERVICE_PROJECT_SETTINGS_STARTUP_CACHE", "0") == "1":
+            self.cache_project_settings()
 
     def last_update(self):
         """Return UTC timestamp of last permissions update."""
@@ -157,3 +162,6 @@ class ConfigService:
         return {
             'restrictions': restrictions
         }
+
+    def cache_project_settings(self):
+        return self.permission_handlers["ogc"].cache_project_settings()
